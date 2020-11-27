@@ -1,0 +1,354 @@
+---
+title: "Homework 6, Linear Models"
+author: "Emil Hafeez (eh2928)"
+date: "11/23/2020"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#Load relevant libraries
+library(tidyverse)
+library(p8105.datasets)
+library(modelr)
+#Prep for neater output
+knitr::opts_chunk$set(
+	echo = TRUE,
+	warning = FALSE,
+  out.width = "90%"
+)
+#Theming with viridis, minimal
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+#set seed for replicability
+set.seed(1)
+```
+
+# Problem One
+
+Read in and tidy.
+```{r read in and tidy, message = F}
+homicide_df = 
+  read_csv("data/homicide.csv", na = c("", "NA", "Unknown")) %>% 
+  mutate(
+    city_state = str_c(city, state, sep = ", "),
+    victim_age = as.numeric(victim_age),
+    resolution = case_when(
+      disposition == "Closed without arrest" ~ 0,
+      disposition == "Open/No arrest"        ~ 0,
+      disposition == "Closed by arrest"      ~ 1)
+  ) %>% 
+  filter(
+    victim_race %in% c("White", "Black"),
+    !city_state %in% c("Tulsa, AL", "Dallas, TX", "Phoenix, AZ", "Kansas City, MO")) %>% 
+  select(city_state, resolution, victim_age, victim_race, victim_sex)
+```
+
+Start with a regression for just one city, Baltimore, MD.
+
+```{r baltimore regression, CIs, table}
+baltimore_df =
+  homicide_df %>% 
+  filter(city_state == "Baltimore, MD")
+
+glm(resolution ~ victim_age + victim_race + victim_sex, 
+    data = baltimore_df,
+    family = binomial()) %>% 
+  broom::tidy() %>% 
+  mutate(
+    OR = exp(estimate),
+    CI_lower = exp(estimate - 1.96 * std.error),
+    CI_upper = exp(estimate + 1.96 * std.error)
+  ) %>% 
+  select(term, OR, starts_with("CI")) %>% 
+  knitr::kable(col.names =
+                c("Variable", "Odds Ratio Estimate", "Lower CI", "Upper CI"),
+              align = "cccc", 
+              digits = 3
+              )
+```
+
+Now, let's run this across multiple cities (all of the 47 remaining).
+
+```{r mapped on cities}
+models_results_df = 
+  homicide_df %>% 
+  nest(data = -city_state) %>% 
+  mutate(
+    models = 
+      map(.x = data, ~glm(resolution ~ victim_age + victim_race + victim_sex, data = .x, family = binomial())),
+    results = map(models, broom::tidy)
+  ) %>% 
+  select(city_state, results) %>% 
+  unnest(results) %>% 
+  mutate(
+    OR = exp(estimate),
+    CI_lower = exp(estimate - 1.96 * std.error),
+    CI_upper = exp(estimate + 1.96 * std.error)
+  ) %>% 
+  select(city_state, term, OR, starts_with("CI")) 
+```
+
+Plot the resultant ORs and CIs of the logistic regression.
+
+```{r plot estimates}
+models_results_df %>% 
+  filter(term == "victim_raceWhite") %>% 
+  mutate(city_state = fct_reorder(city_state, OR)) %>% 
+  ggplot(aes(x = city_state, y = OR)) + 
+  geom_point() + 
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper)) + 
+  geom_hline(yintercept = 1, color = "red") +
+  theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1)) +
+  scale_y_continuous(breaks = seq(0, 30, 5)) +
+  labs(
+    title = "Fig. 1: Estimates of the OR for Solving Homicides in US Cities",
+    x = "City",
+    y = "Odds Ratio Estimate, with CI Bars",
+    caption = "Homework 6: Odds Ratio for Solving Homicides where Victim is White (vs reference: Black), Holding Age and Binary Gender Constant")
+```
+
+The results show that in many US cities of the 47 for which data are available, the odds of a homicide case ending in arrest are greater when the victim is white compared to Black, holding age of the victim and gender (binary) constant. While there is variability in these estimated which often overlaps the null hypothesis value of OR = 1, many estimates are above 1, and many cities have CIs above 1 which do not overlap the null. This is another modern example of racial injustice in our judicial system, for even if arrest and incarceration is not an effective solution, the apparent racial disparity of whose victims find "justice" as defined by our criminal system feels like yet another example of who is prioritized in our society. 
+
+# Problem Two
+
+Load and tidy the data for model fitting.
+```{r load and tidy, results = "hide", message = F}
+birthweight_df = 
+  read_csv("data/birthweight.csv") %>% 
+  mutate(
+    babysex = as.factor(babysex),
+    frace = as.factor(frace),
+    mrace = as.factor(mrace)
+  ) %>% # seeing as these factor labels stay in the same order as the data dictionary, regression interpretation will fall along the same lines, and so I leave this as-is rather than add labels and manually order in terms of fct_infreq() or something similar
+  ungroup() %>% 
+  select(bwt, babysex, bhead, blength, gaweeks, malform, ppbmi, ppwt, delwt, wtgain, mheight, momage, mrace, menarche, frace, fincome, parity, pnumlbw, pnumsga, smoken) %>% 
+  select(-pnumlbw, -pnumsga)
+
+summary(birthweight_df)
+```
+
+```{r plot, include = F}
+birthweight_df %>% 
+  ggplot(aes(x = bwt)) + 
+  geom_histogram()
+```
+
+
+Fit a regression model and plot the model residuals against fitted values, using the original data frame. We'll scale this into the cross-validated approach.
+```{r cutpoint and regress}
+birthweight_df =
+  birthweight_df %>% 
+  mutate(
+    bwt_cp = (bwt > 2000) * (bwt - 2000)
+  )
+
+fit = lm(bwt ~ bhead + blength + blength*bhead + babysex + smoken + fincome + momage, data = birthweight_df)
+summary(fit)
+AIC(fit)
+```
+
+Plots, including the model residuals vs fitted values
+```{r plots2, cache = TRUE}
+birthweight_df %>% 
+  add_residuals(fit) %>% 
+  add_predictions(fit) %>% 
+  ggplot(aes(x = pred, y = resid, alpha = 0.1, color = "blue")) + 
+  geom_point()
+
+birthweight_df %>% 
+  add_residuals(fit) %>% 
+  add_predictions(fit) %>% 
+  ggplot(aes(x = resid), alpha = 0.1) + 
+  geom_density()
+
+birthweight_df %>% 
+  add_residuals(fit) %>% 
+  add_predictions(fit) %>% 
+  ggplot(aes(x = bwt, y = resid, alpha = 0.1, color = "red")) + 
+  geom_point()
+```
+Let me briefly comment on model construction. 
+My approach was primarily driven by a hypothesized structure for the factors that underlie birthweight. 
+
+I first examined a histogram of birthweight and noticed that there are very low birthweights in the sample, not likely due to data collection errors but more to troubling and dangerous circumstances. By first determining that the data may not follow a linearly predictable trend for the whole birthweight distribution, I used the lecture example to make a simple cutpoint, and added it to concepts which (as a lay person) struck me as relevant for birthweight, from the most proximal of factors (head circumference and body length) to more distal (considering income as a proxy for structural and resource factors that may influence birthweight). Then, I applied this with information I obtained by comparing the two given models (as mentioned in live lecture, to make the problem workflow more efficient) and included an interaction. Then, I tested this model, and can see from the above plots from the Predictions versus Residuals plot that the predictions for lower birthweight tend be more biased for the model but may be appropriate for the bulk of the data. Then, I compared this model's predictors coefficients, adjusted R-squared, and AIC to the given models, and decided to proceed.
+
+Let's compare the models. First, generate the cross validation dataframe.
+```{r crossv, cache = TRUE}
+cv_df = 
+  crossv_mc(birthweight_df, 100)
+#test if it's working
+#cv_df %>% pull(train) %>% .[[1]] %>% as_tibble
+```
+
+Now, can we create three functions mapped over each of the cross-validation resample objects? Let's also store the RMSE. 
+```{r mutates crossval, cache = F}
+cv_df = 
+  cv_df %>% 
+  mutate(
+    simple_model  = map(train, ~lm(bwt ~ bhead + gaweeks, data = .x)),
+    pw_model = map(train, ~lm(bwt ~ bhead + blength + blength*bhead + babysex + smoken + fincome + momage + bwt_cp, data = .x)),
+    complex_model  = map(train, ~lm(bwt ~ bhead + blength + babysex + bhead*blength + bhead*babysex + blength*babysex +  bhead*blength*babysex, data = .x))) %>% 
+  mutate(
+    rmse_simple = map2_dbl(simple_model, test, ~rmse(model = .x, data = .y)),
+    rmse_pw = map2_dbl(pw_model, test, ~rmse(model = .x, data = .y)),
+    rmse_complex = map2_dbl(complex_model, test, ~rmse(model = .x, data = .y)))
+```
+
+Let's also plot the RMSEs for each model to compare them based on RMSE. 
+```{r rmses, cache = F}
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + 
+  geom_violin() +
+  scale_y_continuous(breaks = seq(0, 500, 50)) +
+  labs(
+    title = "RMSE for Model Selection",
+    x = "Model",
+    y = "RMSE",
+    caption = "Homework 6: RMSE for three models explaining variation in infant birthweight")
+```
+
+How about plotting the data?
+```{r modelplots}
+simple_model  = lm(bwt ~ bhead + gaweeks, data = birthweight_df)
+pw_model = lm(bwt ~ bhead + blength + blength*bhead + babysex + smoken + fincome + momage, data = birthweight_df)
+complex_model  = lm(bwt ~ bhead + blength + babysex + bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex, data = birthweight_df)
+
+
+birthweight_df %>% 
+  gather_predictions(simple_model, pw_model, complex_model) %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = bhead, y = bwt)) + 
+  geom_point(alpha = 0.5) + 
+  geom_line(aes(y = pred), color = "red", group = 1) + 
+  facet_wrap(~model)
+```
+
+# Problem Three
+First, we've imported the data. 
+```{r load, include = F}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
+
+Let's fit the model, with tmax as the response and tmin as the predictor.
+
+```{r rightfitfortheweather}
+the_right_fit = lm(tmax ~ tmin, data = weather_df)
+summary(the_right_fit)
+```
+Let's just take a look.
+```{r plots}
+weather_df %>% 
+  ggplot(aes(x = tmin, y = tmax)) + 
+  geom_point(aes(alpha = .5, color = tmin)) +
+  stat_smooth(method = "lm", se = F)
+
+weather_df %>% 
+  add_residuals(the_right_fit) %>% 
+  add_predictions(the_right_fit) %>% 
+  ggplot(aes(x = resid), alpha = 1) + 
+  geom_density(color = "red")
+```
+
+Let's compute the two values now, within a bootstrap.
+
+Can we jump right into bootstrap?
+```{r bootstrap, message = FALSE, cache = T}
+bootstrap_sim = 
+  weather_df %>% 
+  bootstrap(n = 5000) %>%
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x)),
+    results = map(models, broom::tidy),
+    glanced = map(models, broom::glance)
+    ) %>% 
+  select(-strap, -models) %>% 
+  unnest(c(results, glanced), names_repair = "unique") %>% 
+  select(.id, term, estimate, r.squared) %>% 
+  mutate(
+    term = str_replace(term, "\\(Intercept\\)", "intercept")
+  ) %>% 
+  pivot_wider(
+    names_from = term,
+    values_from = estimate
+  ) %>% 
+  mutate(
+    transform = log(intercept * tmin),
+    .id = as.numeric(.id)
+  ) %>% 
+  select(-intercept, -tmin)
+```
+
+Let's plot these. 
+```{r rsquared}
+bootstrap_sim %>% 
+  ggplot(aes(x = r.squared)) +
+  geom_density() +
+  scale_x_continuous(breaks = seq(0.87, 0.94, 0.01)) +
+  labs(
+    title = "Bootstrapped Estimates of R-Squared",
+    x = "R-Squared Estimate",
+    y = "Density",
+    caption = "R-squared Value for Max Temp as Function of Min Temp")
+```
+
+The bootstrapped estimate of the r-squared value follows a slightly left-skewed distribution, with a mean of 0.9113 and median of 0.9116. Values range from 0.8743 to 0.9364 (quite a high r-squared value).  
+
+```{r transformed}
+bootstrap_sim %>% 
+  ggplot(aes(x = transform)) +
+  geom_density() +
+  labs(
+    title = "Bootstrapped Estimates of Transformed Coefficients Combination",
+    x = "Transformation Estimate",
+    y = "Density",
+    caption = "5000-sample Estimate of Log Transformed B1*B2")
+```
+
+The bootstrapped estimate of the transformation value (natural log of beta_0 times beta_1) follows distribution with mean and median of 2.013 and with values ranging from [1.922, 2.093].  
+
+Now, using the 5000 bootstrap estimates, we identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval for both desired values.
+
+```{r CIs for estimates}
+bootstrap_sim %>% 
+  pivot_longer(
+    r.squared:transform,
+    names_to = "term",
+    values_to = "value"
+  ) %>% 
+   group_by(term) %>% 
+  summarize(
+    ci_lower = quantile(value, 0.025), 
+    ci_upper = quantile(value, 0.975)) %>% 
+    knitr::kable(col.names =
+                c("Term Estimated", "Lower Confidence Interval Bound", "Upper Confidence Interval Bound"),
+              align = "ccc", 
+              digits = 4
+              )
+```
+
+

@@ -143,6 +143,10 @@ summary(birthweight_df)
 birthweight_df %>% 
   ggplot(aes(x = bwt)) + 
   geom_histogram()
+
+birthweight_df %>% 
+  ggplot(aes(x = bhead, y = bwt)) + 
+  geom_point()
 ```
 
 
@@ -151,10 +155,10 @@ Now, fit a regression model and plot the model residuals against fitted values, 
 birthweight_df =
   birthweight_df %>% 
   mutate(
-    bwt_cp = (bwt > 2000) * (bwt - 2000)
+    bhead_cp = (bhead > 28) * (bhead - 28)
   )
 
-fit = lm(bwt ~ bhead + blength + blength*bhead + babysex + smoken + fincome + momage, data = birthweight_df)
+fit = lm(bwt ~ bhead + blength + blength*bhead + babysex + smoken + fincome + momage + bhead_cp, data = birthweight_df)
 summary(fit)
 AIC(fit)
 ```
@@ -182,10 +186,10 @@ birthweight_df %>%
 Let me briefly comment on model construction. 
 My approach was primarily driven by a hypothesized structure for the factors that underlie birthweight. 
 
-I first examined a histogram of birthweight and noticed that there are very low birthweights in the sample, not likely due to data collection errors but more to troubling and dangerous circumstances. By first determining that the data may not follow a linearly predictable trend for the whole birthweight distribution, I used the lecture example to make a simple cutpoint, and added it to concepts which (as a lay person) struck me as relevant for birthweight, from the most proximal of factors (head circumference and body length) to more distal (considering income as a proxy for structural and resource factors that may influence birthweight). Then, I applied this with information I obtained by comparing the two given models (as mentioned in live lecture, to make the problem workflow more efficient) and included an interaction. Then, I tested this model, and can see from the above plots from the Predictions versus Residuals plot that the predictions for lower birthweight tend be more biased for the model but may be appropriate for the bulk of the data. Then, I compared this model's predictors coefficients, adjusted R-squared, and AIC to the given models, and decided to proceed.
+I first examined a histogram of birthweight and noticed that there are very low birthweights in the sample, not likely due to data collection errors but more to troubling and dangerous circumstances. By first determining that the data may not follow a linearly predictable trend for the whole birthweight distribution, I used the lecture example to make a simple cutpoint, and added it to concepts which (as a lay person) struck me as relevant to the birthweight outcome; I considered variables from the most proximal of factors (e.g. head circumference and body length) to more distal (e.g. income as a proxy for pre-birth structural and resource factors that may influence birthweight). Then, I applied this to information I obtained by comparing the two given models and included an interaction term. Then, I tested this model, and can see from the above plots from the Predictions versus Residuals plot that while the predictions for lower birthweight (and high) do appear less consistent than for the middle density of the data, and there are one or two outliers (see ~3500 grams), it may still be appropriate for the bulk of the data. Then, I compared this model's predictors coefficients, adjusted R-squared, and AIC to the given models, and decided to proceed.
 
 Let's compare the models. First, generate the cross validation dataframe.
-```{r crossv, cache = TRUE}
+```{r crossv}
 cv_df = 
   crossv_mc(birthweight_df, 100)
 #test if it's working
@@ -198,7 +202,7 @@ cv_df =
   cv_df %>% 
   mutate(
     simple_model  = map(train, ~lm(bwt ~ bhead + gaweeks, data = .x)),
-    pw_model = map(train, ~lm(bwt ~ bhead + blength + blength*bhead + babysex + smoken + fincome + momage + bwt_cp, data = .x)),
+    pw_model = map(train, ~lm(bwt ~ bhead + blength + blength*bhead + babysex + smoken + fincome + momage + bhead_cp, data = .x)),
     complex_model  = map(train, ~lm(bwt ~ bhead + blength + babysex + bhead*blength + bhead*babysex + blength*babysex +  bhead*blength*babysex, data = .x))) %>% 
   mutate(
     rmse_simple = map2_dbl(simple_model, test, ~rmse(model = .x, data = .y)),
@@ -319,8 +323,12 @@ bootstrap_sim %>%
     y = "Density",
     caption = "R-squared Value for Max Temp as Function of Min Temp")
 ```
+```{r results = "hide"}
+bootstrap_sim %>% 
+  summary(r.squared)
+```
 
-The bootstrapped estimate of the r-squared value follows a slightly left-skewed distribution, with a mean of 0.9113 and median of 0.9116. Values range from 0.8743 to 0.9364 (quite a high r-squared value).  
+The bootstrapped estimate of the r-squared value follows a slightly left-skewed distribution, with a mean of 0.9113 and median of 0.9116. Values range from 0.8771 to 0.9405 (quite a high r-squared value).  
 
 ```{r transformed}
 bootstrap_sim %>% 
@@ -332,7 +340,10 @@ bootstrap_sim %>%
     y = "Density",
     caption = "5000-sample Estimate of Log Transformed B1*B2")
 ```
-
+```{r results = "hide"}
+bootstrap_sim %>% 
+  summary(transform)
+```
 The bootstrapped estimate of the transformation value (natural log of beta_0 times beta_1) follows distribution with mean and median of 2.013 and with values ranging from [1.922, 2.093].  
 
 Now, using the 5000 bootstrap estimates, we identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval for both desired values.

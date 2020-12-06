@@ -51,16 +51,18 @@ homicide_df =
   select(city_state, resolution, victim_age, victim_race, victim_sex)
 ```
 
-Start with a regression for just one city, Baltimore, MD.
+Start with a regression for just one city, Baltimore, MD. Observe the estimate and the lower and upper confidence intervals of the adjusted odds ratio for solvign homicides comparing Blsck victims to white victims.
 
 ```{r baltimore regression, CIs, table}
 baltimore_df =
   homicide_df %>% 
   filter(city_state == "Baltimore, MD")
 
-glm(resolution ~ victim_age + victim_race + victim_sex, 
+baltimore_fit = glm(resolution ~ victim_age + victim_race + victim_sex, 
     data = baltimore_df,
-    family = binomial()) %>% 
+    family = binomial()) 
+
+baltimore_fit %>% 
   broom::tidy() %>% 
   mutate(
     OR = exp(estimate),
@@ -75,7 +77,7 @@ glm(resolution ~ victim_age + victim_race + victim_sex,
               )
 ```
 
-Now, let's run this across multiple cities (all of the 47 remaining).
+Now, let's run this GLM across multiple cities (all of the 47 remaining), and similarly extract the adjusted odds ratio (and CI) for solving homicides comparing Black victims to white victims. We do this tidily, using purr::map, list columns, and unnesting.
 
 ```{r mapped on cities}
 models_results_df = 
@@ -96,7 +98,7 @@ models_results_df =
   select(city_state, term, OR, starts_with("CI")) 
 ```
 
-Plot the resultant ORs and CIs of the logistic regression.
+Now, let's plot the resultant ORs and CIs of the logistic regression.
 
 ```{r plot estimates}
 models_results_df %>% 
@@ -106,7 +108,7 @@ models_results_df %>%
   geom_point() + 
   geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper)) + 
   geom_hline(yintercept = 1, color = "red") +
-  theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
   scale_y_continuous(breaks = seq(0, 30, 5)) +
   labs(
     title = "Fig. 1: Estimates of the OR for Solving Homicides in US Cities",
@@ -119,7 +121,8 @@ The results show that in many US cities of the 47 for which data are available, 
 
 # Problem Two
 
-Load and tidy the data for model fitting.
+Load and tidy the birthweight data for model fitting. Includes changing converting numeric to factor, and selecting to remove the empty/missing data variables.
+
 ```{r load and tidy, results = "hide", message = F}
 birthweight_df = 
   read_csv("data/birthweight.csv") %>% 
@@ -132,17 +135,18 @@ birthweight_df =
   select(bwt, babysex, bhead, blength, gaweeks, malform, ppbmi, ppwt, delwt, wtgain, mheight, momage, mrace, menarche, frace, fincome, parity, pnumlbw, pnumsga, smoken) %>% 
   select(-pnumlbw, -pnumsga)
 
-summary(birthweight_df)
 ```
+We took a quick look.
+```{r plot, results = "hide", message = F}
+summary(birthweight_df)
 
-```{r plot, include = F}
 birthweight_df %>% 
   ggplot(aes(x = bwt)) + 
   geom_histogram()
 ```
 
 
-Fit a regression model and plot the model residuals against fitted values, using the original data frame. We'll scale this into the cross-validated approach.
+Now, fit a regression model and plot the model residuals against fitted values, using the original data frame. We'll scale this into the cross-validated approach.
 ```{r cutpoint and regress}
 birthweight_df =
   birthweight_df %>% 
